@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>随取云盘 - 我的文件</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <style>
+    :root { --primary-color: #1890ff; --danger-color: #ff4d4f; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7f9; margin: 0; padding: 20px; }
+    .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    .breadcrumb { font-size: 14px; color: #666; margin-bottom: 15px; }
+    .breadcrumb span { cursor: pointer; color: var(--primary-color); }
+
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; background: #fafafa; padding: 12px; border-bottom: 2px solid #f0f0f0; color: #333; }
+    td { padding: 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+    tr:hover { background: #fafafa; }
+
+    .icon { font-size: 20px; margin-right: 10px; vertical-align: middle; }
+    .file-name { cursor: pointer; color: #262626; font-weight: 500; }
+    .file-name:hover { color: var(--primary-color); }
+
+    .btn-delete { background: none; border: 1px solid var(--danger-color); color: var(--danger-color); padding: 5px 10px; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+    .btn-delete:hover { background: var(--danger-color); color: white; }
+
+    .empty-tip { text-align: center; color: #999; padding: 40px; }
+    .tag-dir { background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; font-size: 12px; padding: 2px 5px; border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h2>📂 我的云盘</h2>
+    <div>
+      <button onclick="fetchFiles(0)" style="padding: 8px 15px; cursor: pointer;">刷新列表</button>
+      <span id="userInfo" style="margin-left: 10px; font-size: 14px; color: #666;"></span>
+    </div>
+  </div>
+
+  <!-- 面包屑导航 -->
+  <div class="breadcrumb" id="breadcrumb">
+    当前位置：<span onclick="fetchFiles(0)">全部文件</span>
+  </div>
+
+  <table>
+    <thead>
+    <tr>
+      <th>文件名</th>
+      <th>大小</th>
+      <th>类型</th>
+      <th>上传时间</th>
+      <th>操作</th>
+    </tr>
+    </thead>
+    <tbody id="fileList">
+    <!-- 数据通过 JS 渲染 -->
+    </tbody>
+  </table>
+  <div id="emptyTip" class="empty-tip" style="display: none;">空空如也，快去上传文件吧！</div>
+</div>
+
+<script>
+  const API_BASE = "http://localhost:8080";
+  let jwtToken = localStorage.getItem("token") || ""; // 从本地存储拿Token
+  let currentParentId = 0;
+
+
+  /**
+   * 工具：将各种格式的时间转为可读字符串
+   */
+  function formatDate(dateValue) {
+    if (!dateValue) return '-';
+
+    // 如果是 ISO 格式字符串 (包含 T)，进行简单替换
+    if (typeof dateValue === 'string') {
+      return dateValue.replace('T', ' ').substring(0, 19);
+    }
+
+    // 如果是时间戳或其它格式，转为 Date 对象处理
+    const date = new Date(dateValue);
+    const y = date.getFullYear();
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const d = date.getDate().toString().padStart(2, '0');
+    const hh = date.getHours().toString().padStart(2, '0');
+    const mm = date.getMinutes().toString().padStart(2, '0');
+    const ss = date.getSeconds().toString().padStart(2, '0');
+
+    return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+  }
+
+
+  // 初始化检查
+  if (!jwtToken) {
+    alert("未登录，请先在登录页面登录！");
+  } else {
+    fetchFiles(0);
+  }
+
+  /**
+   * 加载文件列表
+   */
+  async function fetchFiles(parentId) {
+    currentParentId = parentId;
+    const listBody = document.getElementById('fileList');
+    const emptyTip = document.getElementById('emptyTip');
+    listBody.innerHTML = "<tr><td colspan='5' style='text-align:center;'>加载中...</td></tr>";
+
+    try {
+      const res = await axios.get(`${API_BASE}/file/list`, {
+        params: { parentId: parentId },
+        headers: { 'Authorization': `Bearer ${jwtToken}` }
+      });
+
+      const files = res.data.data;
+      listBody.innerHTML = "";
+
+      if (!files || files.length === 0) {
+        emptyTip.style.display = "block";
+        return;
+      }
+      emptyTip.style.display = "none";
+
+      files.forEach(file => {
+        const tr = document.createElement('tr');
+        const isDir = file.isDir === 1;
+
+        tr.innerHTML = `
+                    <td>
+                        <span class="icon">${isDir ? '📁' : '📄'}</span>
+                        <span class="file-name" onclick="${isDir ? `enterFolder(${file.id}, '${file.name}')` : ''}">
+                            ${file.name} ${isDir ? '<span class="tag-dir">目录</span>' : ''}
+                        </span>
+                    </td>
+                    <td>${isDir ? '-' : formatBytes(file.size)}</td>
+                    <td>${file.type || (isDir ? '文件夹' : '未知')}</td>
+                    <td>${formatDate(file.createTime)}</td>
+                    <td>
+                        <button class="btn-delete" onclick="handleDelete(${file.id})">删除</button>
+                    </td>
+                `;
+        listBody.appendChild(tr);
+      });
+      updateBreadcrumb(parentId);
+
+    } catch (err) {
+      listBody.innerHTML = "";
+      if(err.response && err.response.status === 401) {
+        alert("登录失效，请重新登录！");
+      } else {
+        alert("加载失败：" + err.message);
+      }
+    }
+  }
+
+  /**
+   * 进入文件夹
+   */
+  function enterFolder(id, name) {
+    fetchFiles(id);
+    // 这里只是演示，实际复杂的面包屑需要记录路径栈
+    document.getElementById('breadcrumb').innerHTML = `当前位置：<span onclick="fetchFiles(0)">全部文件</span> / <span>${name}</span>`;
+  }
+
+  /**
+   * 删除文件
+   */
+  async function handleDelete(id) {
+    if (!confirm("确定要删除该文件吗？如果该文件是最后一个副本，物理文件也将被删除。")) return;
+
+    try {
+      await axios.delete(`${API_BASE}/file/${id}`, {
+        headers: { 'Authorization': `Bearer ${jwtToken}` }
+      });
+      alert("删除成功");
+      fetchFiles(currentParentId); // 刷新当前列表
+    } catch (err) {
+      console.error("Error Detail:", err.response);
+      alert("删除失败：" + (err.response?.data?.msg || err.message));
+    }
+  }
+
+  /**
+   * 工具：字节转可读大小
+   */
+  function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  }
+
+  function updateBreadcrumb(id) {
+    if(id === 0) {
+      document.getElementById('breadcrumb').innerHTML = `当前位置：<span onclick="fetchFiles(0)">全部文件</span>`;
+    }
+  }
+</script>
+
+</body>
+</html>

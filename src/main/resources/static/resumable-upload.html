@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>随取云盘 - 断点续传专项测试</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.bootcdn.net/ajax/libs/spark-md5/3.0.0/spark-md5.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f4f7f6; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 20px; }
+    .chunk-container { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; padding: 10px; border: 1px solid #eee; }
+    .chunk-box { width: 30px; height: 30px; border: 1px solid #ccc; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 3px; background-color: #fff; }
+    .chunk-success { background-color: #4caf50; color: white; border-color: #388e3c; }
+    .chunk-pending { background-color: #ff9800; color: white; }
+    .log { background: #2d2d2d; color: #adbac7; padding: 15px; height: 250px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; font-size: 13px; border-radius: 5px; }
+    .controls { margin-top: 15px; }
+    button { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    .btn-primary { background-color: #2196f3; color: white; }
+    .btn-danger { background-color: #f44336; color: white; }
+    .btn-success { background-color: #4caf50; color: white; }
+    input[type="text"], input[type="password"] { padding: 8px; width: 200px; margin-right: 10px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>1. 认证配置</h2>
+  <input type="text" id="username" placeholder="用户名" value="admin">
+  <input type="password" id="password" placeholder="密码" value="123456">
+  <button class="btn-primary" onclick="login()">登录获取 Token</button>
+  <span id="loginStatus" style="margin-left:10px; font-weight:bold;"></span>
+</div>
+
+<div class="card">
+  <h2>2. 断点续传测试控制台</h2>
+  <input type="file" id="fileInput">
+  <div class="controls">
+    <button id="uploadBtn" class="btn-success" onclick="handleUpload()">开始/恢复上传</button>
+    <button id="pauseBtn" class="btn-danger" onclick="togglePause()" disabled>模拟网络中断(暂停)</button>
+  </div>
+
+  <div style="margin-top:20px;">
+    <strong>总体进度:</strong>
+    <progress id="mainProgress" value="0" max="100" style="width:100%; height:20px;"></progress>
+    <div id="statusText">准备就绪</div>
+  </div>
+
+  <h4>分片状态图 (绿色:已存在, 橙色:本次上传, 白色:待传)</h4>
+  <div id="chunkBoard" class="chunk-container"></div>
+</div>
+
+<div class="card">
+  <h2>3. 运行日志</h2>
+  <div id="log" class="log"></div>
+</div>
+
+<script>
+  const API_BASE = "http://localhost:8080";
+  let token = "";
+  let isPaused = false;
+  let currentFile = null;
+  let fileMd5 = "";
+
+  function log(msg, color = "#adbac7") {
+    const div = document.getElementById('log');
+    div.innerHTML += `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+    div.scrollTop = div.scrollHeight;
+  }
+
+  async function login() {
+    try {
+      const res = await axios.post(`${API_BASE}/auth/login`, {
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+      });
+      token = res.data.data;
+      document.getElementById('loginStatus').innerText = "已登录 ✅";
+      document.getElementById('loginStatus').style.color = "green";
+      log("登录成功");
+    } catch (e) {
+      log("登录失败: " + e.message, "red");
+    }
+  }
+
+  function togglePause() {
+    isPaused = !isPaused;
+    document.getElementById('pauseBtn').innerText = isPaused ? "点此恢复" : "模拟网络中断(暂停)";
+    if (!isPaused) handleUpload(); // 恢复时重新调用
+  }
+
+  async function calculateMD5(file) {
+    return new Promise((resolve) => {
+      const spark = new SparkMD5.ArrayBuffer();
+      const reader = new FileReader();
+      const chunkSize = 5 * 1024 * 1024;
+      let currentChunk = 0;
+      const chunks = Math.ceil(file.size / chunkSize);
+      reader.onload = (e) => {
+        spark.append(e.target.result);
+        currentChunk++;
+        if (currentChunk < chunks) loadNext();
+        else resolve(spark.end());
+      };
+      function loadNext() {
+        const start = currentChunk * chunkSize;
+        const end = Math.min(start + chunkSize, file.size);
+        reader.readAsArrayBuffer(file.slice(start, end));
+      }
+      loadNext();
+    });
+  }
+
+  async function handleUpload() {
+    if (!token) return alert("请先登录");
+    const fileInput = document.getElementById('fileInput');
+    if (!fileInput.files[0]) return alert("请选择文件");
+
+    currentFile = fileInput.files[0];
+    document.getElementById('pauseBtn').disabled = false;
+    isPaused = false;
+
+    // 1. 计算MD5
+    if (!fileMd5) {
+      document.getElementById('statusText').innerText = "正在计算MD5...";
+      fileMd5 = await calculateMD5(currentFile);
+      log("文件MD5: " + fileMd5);
+    }
+
+    // 2. 检查断点 (向后端询问哪些分片已传)
+    document.getElementById('statusText').innerText = "正在核对断点信息...";
+    const checkRes = await axios.get(`${API_BASE}/file/check?md5=${fileMd5}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    const { isExist, uploadedChunks = [] } = checkRes.data.data;
+    if (isExist) {
+      log("检测到秒传条件，正在秒传...", "cyan");
+      updateProgress(100);
+      return;
+    }
+
+    // 3. 初始化分片面板
+    const chunkSize = 5 * 1024 * 1024;
+    const totalChunks = Math.ceil(currentFile.size / chunkSize);
+    initChunkBoard(totalChunks, uploadedChunks);
+
+    // 4. 循环上传缺失分片
+    log(`共 ${totalChunks} 片，后端已存 ${uploadedChunks.length} 片`);
+
+    for (let i = 0; i < totalChunks; i++) {
+      if (isPaused) {
+        log("上传已暂停，断点记录已保留。", "yellow");
+        return;
+      }
+
+      // 跳过已上传的
+      if (uploadedChunks.includes(i)) continue;
+
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, currentFile.size);
+      const chunk = currentFile.slice(start, end);
+
+      const fd = new FormData();
+      fd.append("file", chunk);
+      fd.append("md5", fileMd5);
+      fd.append("index", i);
+
+      try {
+        await axios.post(`${API_BASE}/file/upload-chunk`, fd, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        uploadedChunks.push(i);
+        markChunkSuccess(i);
+        const percent = Math.round((uploadedChunks.length / totalChunks) * 100);
+        updateProgress(percent);
+      } catch (e) {
+        log(`分片 ${i} 上传出错: ${e.message}`, "red");
+        return;
+      }
+    }
+
+    // 5. 合并
+    document.getElementById('statusText').innerText = "分片上传完毕，请求合并...";
+    try {
+      await axios.post(`${API_BASE}/file/merge`, {
+        md5: fileMd5, fileName: currentFile.name, totalChunks: totalChunks, parentId: 0
+      }, { headers: { 'Authorization': `Bearer ${token}` } });
+      log("文件上传并合并成功！ ✅", "lime");
+      document.getElementById('statusText').innerText = "上传成功！";
+      fileMd5 = ""; // 清空以便下次测试
+    } catch (e) {
+      log("合并失败: " + e.message, "red");
+    }
+  }
+
+  function initChunkBoard(total, uploaded) {
+    const board = document.getElementById('chunkBoard');
+    board.innerHTML = "";
+    for (let i = 0; i < total; i++) {
+      const box = document.createElement('div');
+      box.id = `chunk-${i}`;
+      box.className = 'chunk-box';
+      box.innerText = i;
+      if (uploaded.includes(i)) box.classList.add('chunk-success');
+      board.appendChild(box);
+    }
+  }
+
+  function markChunkSuccess(i) {
+    const box = document.getElementById(`chunk-${i}`);
+    if (box) {
+      box.classList.remove('chunk-pending');
+      box.classList.add('chunk-success');
+    }
+  }
+
+  function updateProgress(val) {
+    document.getElementById('mainProgress').value = val;
+  }
+</script>
+</body>
+</html>

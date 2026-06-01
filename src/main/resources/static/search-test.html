@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>随取云盘 - ES全文检索测试</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f0f2f5; padding: 30px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 12px; border: 1px solid #d9d9d9; border-radius: 4px; outline: none; }
+        button { padding: 10px 25px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; transition: 0.3s; }
+        button:hover { background: #40a9ff; }
+        .result-item { border-bottom: 1px solid #f0f0f0; padding: 15px 0; display: flex; justify-content: space-between; align-items: center; }
+        .result-item:last-child { border-bottom: none; }
+        .file-info { display: flex; flex-direction: column; gap: 5px; }
+        .file-name { font-size: 16px; font-weight: bold; color: #262626; }
+        .file-desc { font-size: 14px; color: #8c8c8c; }
+        .tag { font-size: 12px; padding: 2px 8px; background: #e6f7ff; color: #1890ff; border: 1px solid #91d5ff; border-radius: 2px; }
+        .no-data { text-align: center; color: #bfbfbf; padding: 40px; }
+        .highlight { color: #f5222d; font-weight: bold; }
+        .token-box { margin-bottom: 15px; font-size: 12px; color: #595959; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <h2>🔍 文件全文检索测试 (ES)</h2>
+        <div class="token-box">
+            状态: <span id="authStatus" style="color: red;">未登录，请先在上传页面登录</span>
+        </div>
+        <div class="search-box">
+            <input type="text" id="keyword" placeholder="请输入文件名或描述中的关键词..." onkeypress="if(event.keyCode==13) doSearch()">
+            <button onclick="doSearch()">搜索</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div id="loading" style="display: none; text-align: center;">查询中...</div>
+        <div id="resultList">
+            <div class="no-data">输入关键词开始检索 ES 索引</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_BASE = "http://localhost:8080";
+
+    // 从本地存储获取之前登录的 Token (假设你在之前的测试页面存了)
+    // 或者你可以手动填入一个有效 Token
+    let token = localStorage.getItem("token") || "";
+
+    if(token) {
+        document.getElementById('authStatus').innerText = "已关联登录信息 ✅";
+        document.getElementById('authStatus').style.color = "green";
+    }
+
+    async function doSearch() {
+        const keyword = document.getElementById('keyword').value;
+        const resultList = document.getElementById('resultList');
+        const loading = document.getElementById('loading');
+
+        if (!keyword) return;
+
+        loading.style.display = "block";
+        resultList.innerHTML = "";
+
+        try {
+            const res = await axios.get(`${API_BASE}/search/files`, {
+                params: { keyword },
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            loading.style.display = "none";
+            const files = res.data.data;
+
+            if (!files || files.length === 0) {
+                resultList.innerHTML = '<div class="no-data">未匹配到相关文件</div>';
+                return;
+            }
+
+            files.forEach(item => {
+                // 注意：由于是 ES 返回，字段可能在 content 属性里，取决于你的后端写法
+                // 如果后端直接返回 List<FileIndex>，则直接读取属性
+                const file = item.content || item;
+
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                div.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-name">${highlight(file.name, keyword)}</div>
+                        <div class="file-desc">${file.description ? highlight(file.description, keyword) : '暂无描述'}</div>
+                    </div>
+                    <div>
+                        <span class="tag">ID: ${file.id}</span>
+                        <span class="tag" style="background:#f6ffed; color:#52c41a; border-color:#b7eb8f;">ES 匹配度: ${item.score || 'N/A'}</span>
+                    </div>
+                `;
+                resultList.appendChild(div);
+            });
+
+        } catch (e) {
+            loading.style.display = "none";
+            resultList.innerHTML = `<div class="no-data" style="color:red;">搜索失败: ${e.message}</div>`;
+        }
+    }
+
+    // 简单的关键词高亮函数
+    function highlight(text, keyword) {
+        if (!text) return "";
+        const reg = new RegExp(keyword, 'gi');
+        return text.replace(reg, (matched) => `<span class="highlight">${matched}</span>`);
+    }
+</script>
+
+</body>
+</html>

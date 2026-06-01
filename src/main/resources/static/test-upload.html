@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>随取云盘 - 上传功能测试</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/spark-md5/3.0.0/spark-md5.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; line-height: 1.6; }
+        .section { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        .log { background: #333; color: #fff; padding: 10px; height: 300px; overflow-y: scroll; font-size: 12px; }
+        progress { width: 100%; height: 25px; }
+        button { cursor: pointer; padding: 5px 15px; }
+    </style>
+</head>
+<body>
+
+<h2>随取云盘技术栈测试 - 上传模块</h2>
+
+<!-- 第一步：登录获取 Token -->
+<div class="section">
+    <h3>1. 用户登录 (获取 JWT)</h3>
+    <input type="text" id="username" placeholder="用户名" value="admin">
+    <input type="password" id="password" placeholder="密码" value="123456">
+    <button onclick="login()">登录</button>
+    <p>当前 Token: <span id="tokenDisplay" style="color: green; word-break: break-all;">未登录</span></p>
+</div>
+
+<!-- 第二步：文件上传 -->
+<div class="section">
+    <h3>2. 分片上传测试</h3>
+    <input type="file" id="fileInput">
+    <button onclick="startUpload()">开始上传</button>
+    <div style="margin-top: 10px;">
+        进度: <progress id="progressBar" value="0" max="100"></progress>
+        <span id="progressText">0%</span>
+    </div>
+</div>
+
+<!-- 日志显示 -->
+<div class="section">
+    <h3>运行日志</h3>
+    <div id="log" class="log"></div>
+</div>
+
+<script>
+    const API_BASE = "http://localhost:8080"; // 确保和后端地址一致
+    let jwtToken = "";
+
+
+    // 控制并发的上传函数
+    async function uploadWithConcurrency(chunks, maxConcurrent) {
+        const total = chunks.length;
+        let index = 0; // 当前待上传的分片索引
+        const results = [];
+
+        // 定义一个执行器
+        async function executor() {
+            while (index < total) {
+                const i = index++;
+                const chunkInfo = chunks[i];
+
+                // 如果已经上传过，直接跳过
+                if (chunkInfo.skip) {
+                    log(`分片 [${i}] 已存在，跳过`);
+                    continue;
+                }
+
+                const formData = new FormData();
+                formData.append("file", chunkInfo.blob);
+                formData.append("md5", chunkInfo.md5);
+                formData.append("index", i);
+
+                try {
+                    await axios.post(`${API_BASE}/file/upload-chunk`, formData, {
+                        headers: { 'Authorization': `Bearer ${jwtToken}` }
+                    });
+                    log(`分片 [${i}] 上传完成 (并发中)`);
+                    // 更新进度条逻辑...
+                } catch (err) {
+                    throw new Error(`分片 ${i} 上传失败`);
+                }
+            }
+        }
+
+        // 启动指定数量的并发“线程”
+        const workers = Array(Math.min(maxConcurrent, total)).fill(null).map(executor);
+        await Promise.all(workers);
+    }
+
+    // 日志打印工具
+    function log(msg) {
+        const logDiv = document.getElementById('log');
+        logDiv.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}<br>`;
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    // 1. 登录功能
+    async function login() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        try {
+            const res = await axios.post(`${API_BASE}/auth/login`, { username, password });
+            // 假设返回结构是 { code: 200, data: "token_string" }
+            jwtToken = res.data.data;
+            document.getElementById('tokenDisplay').innerText = jwtToken;
+            localStorage.setItem("token",jwtToken);
+            log("登录成功！获取到 Token");
+        } catch (err) {
+            log("登录失败: " + err.message);
+        }
+    }
+
+    // 2. 计算文件 MD5 (秒传和断点续传的关键)
+    function calculateMD5(file) {
+        return new Promise((resolve) => {
+            const spark = new SparkMD5.ArrayBuffer();
+            const reader = new FileReader();
+            const chunkSize = 5 * 1024 * 1024; // 5MB一片来算MD5
+            let currentChunk = 0;
+            const chunks = Math.ceil(file.size / chunkSize);
+
+            reader.onload = (e) => {
+                spark.append(e.target.result);
+                currentChunk++;
+                if (currentChunk < chunks) {
+                    loadNext();
+                } else {
+                    resolve(spark.end());
+                }
+            };
+
+            function loadNext() {
+                const start = currentChunk * chunkSize;
+                const end = Math.min(start + chunkSize, file.size);
+                reader.readAsArrayBuffer(file.slice(start, end));
+            }
+            loadNext();
+        });
+    }
+
+    // 3. 上传核心流程
+    async function startUpload() {
+        var jwtToken = localStorage.getItem("token");
+        if (!jwtToken || jwtToken == "") { log("请先登录！"); return; }
+        const file = document.getElementById('fileInput').files[0];
+        if (!file) { log("请选择文件！"); return; }
+
+        // 3.1 计算MD5
+        log(`正在计算文件 MD5，请稍候...`);
+        const md5 = await calculateMD5(file);
+        log(`MD5 计算完成: ${md5}`);
+
+        // 3.2 调用秒传/断点续传检查接口
+        log(`正在检查文件状态...`);
+        const checkRes = await axios.get(`${API_BASE}/file/check`, {
+            params: { md5 },
+            headers: { 'Authorization': `Bearer ${jwtToken}` }
+        });
+
+        const { isExist, uploadedChunks } = checkRes.data.data;
+
+        if (isExist) {
+            log("<span style='color:cyan'>秒传成功！服务器已存在该文件。</span>");
+            updateProgress(100);
+            return;
+        }
+
+        // 3.3 开始分片上传
+        const chunkSize = 5 * 1024 * 1024; // 每片 5MB
+        const totalChunks = Math.ceil(file.size / chunkSize);
+        log(`文件需要切分为 ${totalChunks} 片，开始上传...`);
+
+        const chunks = [];
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+            chunks.push({
+                blob: file.slice(start, end),
+                md5: md5,
+                skip: uploadedChunks && uploadedChunks.includes(i)
+            });
+        }
+
+        // 3.4 发送合并请求
+        // 重点：设置并发数为 3
+        log("开始多线程并发上传...");
+        try {
+            await uploadWithConcurrency(chunks, 3);
+            // 所有并发分片传完后，再请求合并
+            log("所有并发分片已传完，请求合并...");
+            await axios.post(`${API_BASE}/file/merge`, {
+                md5: md5,
+                fileName: file.name,
+                totalChunks: totalChunks,
+                parentId: 0 // 默认存到根目录
+            }, {
+                headers: { 'Authorization': `Bearer ${jwtToken}` }
+            });
+            log("<span style='color:lime'>文件合并成功！上传完成。</span>");
+        } catch (err) {
+            log("上传过程中出错: " + e.message);
+        }
+    }
+
+    function updateProgress(val) {
+        document.getElementById('progressBar').value = val;
+        document.getElementById('progressText').innerText = val + "%";
+    }
+</script>
+</body>
+</html>
