@@ -12,12 +12,14 @@ import org.apache.ibatis.annotations.Select;
 public interface ShareMapper extends BaseMapper<Share> {
 
     /**
-     * 关联查询分享详情及文件信息
-     * 用户访问分享链接时使用
+     * 联表查询分享的详细信息
+     * 注意：share.file_id 应该存储的是 file_user 的 ID
      */
-    @Select("SELECT s.id, s.expire_time, s.status, f.name as fileName, f.size as fileSize, f.type as fileType " +
+    @Select("SELECT s.id, s.expire_time, s.status, " +
+            "fu.file_name as fileName, fi.size as fileSize, fi.type as fileType, fi.path as filePath " +
             "FROM share s " +
-            "LEFT JOIN file_info f ON s.file_id = f.id " +
+            "JOIN file_user fu ON s.file_id = fu.id " +
+            "JOIN file_info fi ON fu.file_id = fi.id " +
             "WHERE s.id = #{shareId}")
-    ShareVO selectShareWithFile(@Param("shareId") Long shareId);
+    ShareVO selectShareDetail(@Param("shareId") Long shareId);
 }

@@ -26,6 +26,10 @@ export function deleteFile(id) {
   return request.delete(`/file/${id}`)
 }
 
+export function updateDescription(id, description) {
+  return request.put(`/file/description/${id}`, null, { params: { description } })
+}
+
 export function searchFiles(keyword) {
   return request.get('/search/files', { params: { keyword } })
 }

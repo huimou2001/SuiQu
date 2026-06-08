@@ -6,17 +6,33 @@ import {
 import {
   FolderOpenOutlined, FileOutlined, DeleteOutlined,
   CloudUploadOutlined, FolderAddOutlined, ShareAltOutlined,
-  ArrowUpOutlined,
+  ArrowUpOutlined, EditOutlined,
 } from '@ant-design/icons'
 import {
   getFileList, createDirectory, deleteFile, checkFile,
-  uploadChunk, mergeChunks,
+  uploadChunk, mergeChunks, updateDescription,
 } from '../api/file'
 import { computeMD5, getChunkCount, CHUNK_SIZE } from '../utils/uploader'
 import ShareModal from '../components/ShareModal'
 
 const { Search } = Input
 const { Text } = Typography
+
+function formatTime(t) {
+  if (!t) return '-'
+  if (Array.isArray(t)) {
+    const [y, m, d, h, mi, s] = t
+    return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')} ${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  }
+  if (typeof t === 'string') {
+    const d = new Date(t)
+    if (!isNaN(d)) {
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    }
+  }
+  return t
+}
 
 function formatSize(bytes) {
   if (!bytes && bytes !== 0) return '-'
@@ -26,8 +42,8 @@ function formatSize(bytes) {
   return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
 }
 
-function getFileIcon(type) {
-  if (type === 'folder' || type === 'DIRECTORY') return <FolderOpenOutlined style={{ color: '#faad14', fontSize: 20 }} />
+function getFileIcon(record) {
+  if (record.isDir === 1) return <FolderOpenOutlined style={{ color: '#faad14', fontSize: 20 }} />
   return <FileOutlined style={{ color: '#1890ff', fontSize: 20 }} />
 }
 
@@ -65,7 +81,7 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
   }, [fetchFiles, searchKeyword])
 
   const handleOpenDir = (record) => {
-    setPathStack([...pathStack, { id: record.id, name: record.name }])
+    setPathStack([...pathStack, { id: record.id, name: record.fileName }])
   }
 
   const handleBreadcrumbClick = (index) => {
@@ -148,6 +164,28 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
     }
   }
 
+  const [descModalOpen, setDescModalOpen] = useState(false)
+  const [descFileId, setDescFileId] = useState(null)
+  const [descValue, setDescValue] = useState('')
+
+  const handleDescription = (record) => {
+    setDescFileId(record.id)
+    setDescValue(record.description || '')
+    setDescModalOpen(true)
+  }
+
+  const handleDescriptionSave = async () => {
+    try {
+      await updateDescription(descFileId, descValue)
+      message.success('描述更新成功')
+      setDescModalOpen(false)
+      setDescFileId(null)
+      fetchFiles()
+    } catch {
+      // handled
+    }
+  }
+
   const handleShare = (record) => {
     setShareFileId(record.id)
     setShareModalOpen(true)
@@ -156,13 +194,13 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
   const columns = [
     {
       title: '文件名',
-      dataIndex: 'name',
-      key: 'name',
+      dataIndex: 'fileName',
+      key: 'fileName',
       render: (text, record) => {
-        const isDir = record.type === 'DIRECTORY' || record.type === 'folder'
+        const isDir = record.isDir === 1
         return (
           <Space>
-            {getFileIcon(record.type)}
+            {getFileIcon(record)}
             {isDir ? (
               <a onClick={() => handleOpenDir(record)} style={{ fontWeight: 500 }}>{text}</a>
             ) : (
@@ -178,16 +216,23 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
       key: 'size',
       width: 130,
       render: (size, record) => {
-        if (record.type === 'DIRECTORY' || record.type === 'folder') return '-'
+        if (record.isDir === 1) return '-'
         return formatSize(size)
       },
     },
     {
-      title: '修改时间',
-      dataIndex: 'updateTime',
-      key: 'updateTime',
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
       width: 200,
-      render: (t) => t || '-',
+      render: (text) => text ? <span style={{ color: '#666' }}>{text}</span> : <span style={{ color: '#ccc' }}>无</span>,
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createTime',
+      key: 'createTime',
+      width: 200,
+      render: (t) => formatTime(t),
     },
     {
       title: '操作',
@@ -195,10 +240,15 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
       width: 200,
       render: (_, record) => (
         <Space>
-          {(record.type !== 'DIRECTORY' && record.type !== 'folder') && (
-            <Tooltip title="分享">
-              <Button type="link" icon={<ShareAltOutlined />} onClick={() => handleShare(record)} />
-            </Tooltip>
+          {record.isDir !== 1 && (
+            <>
+              <Tooltip title="添加/修改描述">
+                <Button type="link" icon={<EditOutlined />} onClick={() => handleDescription(record)} />
+              </Tooltip>
+              <Tooltip title="分享">
+                <Button type="link" icon={<ShareAltOutlined />} onClick={() => handleShare(record)} />
+              </Tooltip>
+            </>
           )}
           <Popconfirm title="确定删除吗？" onConfirm={() => handleDelete(record.id)}>
             <Tooltip title="删除">
@@ -238,8 +288,7 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
         loading={loading}
         pagination={false}
         onRow={(record) => {
-          const isDir = record.type === 'DIRECTORY' || record.type === 'folder'
-          return isDir ? { onDoubleClick: () => handleOpenDir(record), style: { cursor: 'pointer' } } : {}
+          return record.isDir === 1 ? { onDoubleClick: () => handleOpenDir(record), style: { cursor: 'pointer' } } : {}
         }}
       />
 
@@ -260,6 +309,10 @@ export default function FilePage({ searchKeyword, onSearchClear }) {
             <p className="ant-upload-hint">支持大文件分片上传、秒传和断点续传</p>
           </Upload.Dragger>
         )}
+      </Modal>
+
+      <Modal title="添加描述" open={descModalOpen} onOk={handleDescriptionSave} onCancel={() => { setDescModalOpen(false); setDescValue(''); setDescFileId(null) }}>
+        <Input.TextArea rows={3} placeholder="请输入文件描述，用于搜索" value={descValue} onChange={(e) => setDescValue(e.target.value)} />
       </Modal>
 
       <ShareModal

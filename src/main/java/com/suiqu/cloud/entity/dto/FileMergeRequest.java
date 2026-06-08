@@ -11,5 +11,6 @@ public class FileMergeRequest {
     private String md5;
     private String fileName;
     private Integer totalChunks;
-    private Long parentId; // 合并到哪个目录下
+    private Long parentId;
+    private String description;
 }

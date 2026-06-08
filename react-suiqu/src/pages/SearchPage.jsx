@@ -1,19 +1,22 @@
 import { useState, useEffect } from 'react'
-import { Table, Input, Tag, Empty, Spin } from 'antd'
-import { FileOutlined, FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
+import { Table, Tag, Empty, Spin } from 'antd'
+import { FileOutlined, SearchOutlined } from '@ant-design/icons'
 import { searchFiles } from '../api/file'
 
-function getFileIcon(type) {
-  if (type === 'folder' || type === 'DIRECTORY') return <FolderOpenOutlined style={{ color: '#faad14', fontSize: 20 }} />
-  return <FileOutlined style={{ color: '#1890ff', fontSize: 20 }} />
-}
-
-function formatSize(bytes) {
-  if (!bytes && bytes !== 0) return '-'
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+function formatTime(t) {
+  if (!t) return '-'
+  if (Array.isArray(t)) {
+    const [y, m, d, h, mi, s] = t
+    return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')} ${String(h).padStart(2,'0')}:${String(mi).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+  }
+  if (typeof t === 'string') {
+    const d = new Date(t)
+    if (!isNaN(d)) {
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    }
+  }
+  return t
 }
 
 export default function SearchPage({ keyword }) {
@@ -39,11 +42,11 @@ export default function SearchPage({ keyword }) {
   const columns = [
     {
       title: '文件名',
-      dataIndex: 'name',
-      key: 'name',
-      render: (text, record) => (
+      dataIndex: 'file_name',
+      key: 'file_name',
+      render: (text) => (
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {getFileIcon(record.type || record.fileType)}
+          <FileOutlined style={{ color: '#1890ff', fontSize: 20 }} />
           {text}
         </span>
       ),
@@ -59,7 +62,7 @@ export default function SearchPage({ keyword }) {
       dataIndex: 'createTime',
       key: 'createTime',
       width: 200,
-      render: (t) => t || '-',
+      render: (t) => formatTime(t),
     },
   ]
 

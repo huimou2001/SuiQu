@@ -40,8 +40,22 @@ public class FileController {
      */
     @PostMapping("/merge")
     public Result merge(@RequestBody FileMergeRequest req) {
-        fileService.mergeChunks(req.getMd5(), req.getFileName(), req.getTotalChunks(),req.getParentId());
-        return Result.success("ok");
+        // 现在需要传入 5 个参数
+        fileService.mergeChunks(
+                req.getMd5(),
+                req.getFileName(),
+                req.getTotalChunks(),
+                req.getParentId()
+        );
+        return Result.success("合并成功");
+    }
+
+
+    // 2. 新增：更新描述接口
+    @PutMapping("/description/{id}")
+    public Result updateDescription(@PathVariable("id") Long id, @RequestParam String description) {
+        fileService.updateFileDescription(id, description);
+        return Result.success("描述更新成功");
     }
 
     /**

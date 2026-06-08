@@ -3,6 +3,7 @@ package com.suiqu.cloud.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.elasticsearch.annotations.DateFormat;
@@ -19,12 +20,15 @@ public class FileIndex {
     @Id
     private Long id;
 
+    @JsonProperty("file_name")
     @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
     private String name;
+
 
     @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
     private String description;
 
+    @JsonProperty("user_id")
     @Field(type = FieldType.Keyword)
     private Long userId;
 
